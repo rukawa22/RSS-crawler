@@ -9,7 +9,7 @@ import json
 
 # --- 隱私設定區域 (優先讀取 GitHub Secrets) ---
 # 這樣你的 SHEET_ID 就不會出現在程式碼中
-SHEET_ID = os.getenv('SHEET_ID', '1ooE30J2aXm0wbsSnqXHSg--yIEVAywQ7GwJbRqFbc6g')
+SHEET_ID = os.getenv('SHEET_ID')
 SHEET_NAME = 'RSS'
 
 RSS_URLS = [
@@ -113,3 +113,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
