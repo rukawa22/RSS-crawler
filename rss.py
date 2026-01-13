@@ -19,9 +19,7 @@ RSS_URLS = [
     'https://technews.tw/category/component/feed/', #科技新報
     'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664', #CNBC
     'https://finance.yahoo.com/news/rssindex', #Yahoo Finance
-    'https://news.google.com/rss/search?q=China+economy&hl=zh-TW&gl=TW&ceid=TW:zh-Hant', #Google News
-    'https://www.coindesk.com/arc/outboundfeeds/rss/', #CoinDesk
-    'https://cointelegraph.com/rss' #Cointelegraph
+    'https://news.google.com/rss/search?q=China+economy&hl=zh-TW&gl=TW&ceid=TW:zh-Hant' #Google News
 ]
 
 def get_google_sheet():
@@ -113,4 +111,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
