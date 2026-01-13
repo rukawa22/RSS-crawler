@@ -2,8 +2,8 @@ name: RSS_Auto_Update
 
 on:
   schedule:
-    - cron: '0 */1 * * *'  # 每 1 小時自動跑一次
-  workflow_dispatch:      # 讓你可以手動按按鈕測試
+    - cron: '0 */1 * * *'  # 每 1 小時跑一次
+  workflow_dispatch:      # 允許手動點擊執行
 
 jobs:
   build:
@@ -23,6 +23,7 @@ jobs:
 
       - name: Run script
         env:
+          # ✅ 這兩行是核心，將雲端 Secret 轉為程式能讀到的環境變數
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python rss.py
