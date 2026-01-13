@@ -2,15 +2,15 @@ import feedparser
 import gspread
 from google.oauth2.service_account import Credentials
 import trafilatura
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import os
 import json
 
 # --- 設定區域 ---
-SHEET_ID = ''
-SERVICE_ACCOUNT_FILE = 'creds.json' # 本地測試用
-SHEET_NAME = 'RSS' # Google_Excel分頁名稱
+SHEET_ID = os.getenv('SHEET_ID')
+SERVICE_ACCOUNT_FILE = 'creds.json'
+SHEET_NAME = 'RSS'
 
 RSS_URLS = [
     'https://news.cnyes.com/rss/category/tw_stock', #鉅亨網
@@ -24,46 +24,55 @@ RSS_URLS = [
     'https://cointelegraph.com/rss' #Cointelegraph
 ]
 
+# --- 這裡是你問的 get_google_sheet 函式區塊 ---
 def get_google_sheet():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
-    # 支援 GitHub Actions Secrets: 優先檢查環境變數
-    if os.getenv('GOOGLE_CREDS_JSON'):
-        creds_dict = json.loads(os.getenv('GOOGLE_CREDS_JSON'))
+    # ✅ 這是你剛才問的那段：優先讀取 GitHub 設定的 Secret
+    creds_json = os.getenv('GOOGLE_CREDS_JSON')
+    
+    if creds_json:
+        # 如果在 GitHub Actions 運行，會進到這裡
+        creds_dict = json.loads(creds_json)
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     else:
+        # 如果在你自己的電腦運行，會進到這裡，找本地的 creds.json
         creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
-        
+    
     client = gspread.authorize(creds)
     sh = client.open_by_key(SHEET_ID)
     
     try:
         worksheet = sh.worksheet(SHEET_NAME)
+        # 讀取第二欄（標題）用於去重
         existing_titles = set(worksheet.col_values(2))
     except gspread.exceptions.WorksheetNotFound:
-        worksheet = sh.add_worksheet(title=SHEET_NAME, rows="1000", cols="4")
+        # 若分頁不存在則新增
+        worksheet = sh.add_worksheet(title=SHEET_NAME, rows="5000", cols="4")
         worksheet.append_row(["日期時間", "標題", "內文", "來源網址"])
         existing_titles = set(["標題"])
         
     return worksheet, existing_titles
+# --- 函式結束 ---
 
 def fetch_full_text(url):
+    """擷取全文"""
     try:
         downloaded = trafilatura.fetch_url(url)
         if downloaded is None: return "無法下載"
         result = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
         return result if result else "擷取不到正文"
     except:
-        return "錯誤"
+        return "擷取錯誤"
 
 def cleanup_old_data(worksheet):
-    """防止試算表爆炸：保留最新 7000 筆，刪除其餘舊資料"""
+    """防止試算表爆炸：超過 7000 行就清理"""
     try:
-        all_values = worksheet.col_values(2) # 檢查標題欄
+        all_values = worksheet.col_values(2)
         total_rows = len(all_values)
-        if total_rows > 7000: 
-            print(f"清理舊資料中... 目前行數: {total_rows}，刪除第 7001 行後的資料")
-            worksheet.delete_rows(5001, total_rows)
+        if total_rows > 7000:
+            print(f"清理舊資料中... 目前行數: {total_rows}")
+            worksheet.delete_rows(7001, total_rows)
     except Exception as e:
         print(f"清理失敗: {e}")
 
@@ -81,6 +90,7 @@ def main():
         print(f"\n[掃描] {rss_url}")
         feed = feedparser.parse(rss_url)
         
+        # 使用 reversed 確保最新鮮的文章最後被處理，配合 insert_rows(row=2)
         for entry in reversed(feed.entries):
             title = getattr(entry, 'title', '無標題').strip()
             link = getattr(entry, 'link', '')
@@ -97,11 +107,12 @@ def main():
             time.sleep(1) 
 
     if new_data:
+        # 再次反轉讓最前面的資料是最新發布的
         new_data.reverse()
-        print(f"\n正在將 {len(new_data)} 筆新資料插入到頂端...")
+        print(f"\n正在插入 {len(new_data)} 筆新資料到頂端...")
         worksheet.insert_rows(new_data, row=2)
-        cleanup_old_data(worksheet) # 每次更新後順便清理
-        print("🎉 更新與清理完成！")
+        cleanup_old_data(worksheet)
+        print("🎉 更新完成！")
     else:
         print("\n✅ 沒有發現新文章。")
 
