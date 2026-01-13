@@ -2,7 +2,7 @@ name: RSS_Auto_Update
 
 on:
   schedule:
-    - cron: '0 */1 * * *'  # 每 1 小時跑一次
+    - cron: '0 * * * *'  # 每 1 小時跑一次
   workflow_dispatch:      # 允許手動點擊執行
 
 jobs:
