@@ -24,5 +24,5 @@ jobs:
       - name: Run script
         env:
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
-          SHEET_ID: '1ooE30J2aXm0wbsSnqXHSg--yIEVAywQ7GwJbRqFbc6g'
+          SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python rss.py
