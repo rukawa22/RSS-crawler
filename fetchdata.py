@@ -93,39 +93,50 @@ def fetch_market_12_with_fallback():
             ])
         except: pass
 
-    # C. 台指期 (強化回溯與時段獨立抓取邏輯)
+    # --- C. 台指期 (精準時段過濾與回溯邏輯) ---
     contract_month = tw_now.strftime('%Y%m')
     
-    # 建立回溯日期清單 (例如 15 天)，確保能跨越過年或連假
-    taifex_dates = [(tw_now - datetime.timedelta(days=i)).strftime('%Y/%m/%d') for i in range(15)]
+    # 建立 15 天回溯清單，確保涵蓋長假
+    taifex_backtrack = [(tw_now - datetime.timedelta(days=i)).strftime('%Y/%m/%d') for i in range(15)]
 
-    # 分別針對 一般(0) 與 盤後(1) 獨立尋找，確保不會互相誤用數據
-    for sess_code, sess_label in [("0", ""), ("1", "-夜")]:
+    # 交易時段標籤對照 (用於網頁文字比對，防止誤抓)
+    session_map = {
+        "0": {"label": "", "web_text": "一般交易時段"},
+        "1": {"label": "-夜", "web_text": "盤後交易時段"}
+    }
+
+    for sess_code, info in session_map.items():
         success = False
-        prod_name = f"TX{contract_month}{sess_label}"
+        prod_name = f"TX{contract_month}{info['label']}"
         
-        for d_str in taifex_dates:
+        for d_str in taifex_backtrack:
             try:
                 url = 'https://www.taifex.com.tw/cht/3/futDailyMarketReport'
                 payload = {
                     'queryType': '2', 
-                    'marketCode': sess_code,     # 0:一般, 1:盤後
+                    'marketCode': sess_code, 
                     'commodity_id': 'TX', 
                     'queryDate': d_str
                 }
-                resp = requests.post(url, data=payload, verify=False, timeout=10)
+                # 增加 headers 模擬真實瀏覽器，減少被阻擋或回傳舊快取的機率
+                resp = requests.post(url, data=payload, verify=False, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                found_data = False
+                # 關鍵保險 1：檢查網頁標題或內容是否包含該時段的正確文字
+                # 避免 sess_code=0 (一般) 卻抓到 sess_code=1 (夜盤) 的快取網頁
+                web_content = soup.get_text()
+                if info['web_text'] not in web_content:
+                    continue
+
+                found_valid_row = False
                 for tr in soup.find_all('tr'):
                     tds = tr.find_all('td')
-                    # 判斷是否為目標契約與月份
+                    # 關鍵保險 2：比對契約代碼與月份
                     if len(tds) >= 6 and tds[0].get_text(strip=True) == 'TX' and tds[1].get_text(strip=True) == contract_month:
                         open_p = tds[2].get_text(strip=True).replace(',', '')
                         
-                        # 檢查價格是否為有效數字 (排除 '-' 或 '0')
-                        if open_p not in ['-', '', '0']:
-                            # 關鍵修正：若非今日資料，備註必須帶上日期，否則寫入時會被視為重複而無法更新
+                        # 關鍵保險 3：排除無效報價
+                        if open_p not in ['-', '', '0', '0.0']:
                             note = "期交所官方" if d_str == today_str else f"期交所官方({d_str})"
                             
                             collected_rows.append([
@@ -137,13 +148,14 @@ def fetch_market_12_with_fallback():
                                 float(tds[5].get_text(strip=True).replace(',', '')), 
                                 note
                             ])
-                            found_data = True
+                            found_valid_row = True
                             break
                 
-                if found_data:
+                if found_valid_row:
                     success = True
-                    break # 找到該時段最新的一筆有效資料，跳出日期回溯迴圈
-            except:
+                    break # 找到該時段最新的一筆有效日期，停止回溯
+            except Exception as e:
+                print(f"⚠️ 抓取 {prod_name} 於 {d_str} 時發生錯誤: {e}")
                 continue
 
     # --- 5. 寫回 Sheets ---
@@ -162,5 +174,6 @@ def fetch_market_12_with_fallback():
 
 if __name__ == "__main__":
     fetch_market_12_with_fallback()
+
 
 
