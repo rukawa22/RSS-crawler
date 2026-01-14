@@ -2,28 +2,33 @@ name: RSS_Auto_Update
 
 on:
   schedule:
-    - cron: '15 * * * *'  # 每小時的第 15 分鐘執行，通常會比較準時
-  workflow_dispatch:      # 允許手動點擊執行
+    - cron: '15 * * * *'  # 每小時的第 25 分鐘自動跑一次 (UTC 時間)
+  workflow_dispatch:      # 讓你可以手動點擊按鈕執行
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install dependencies
         run: |
-          pip install feedparser gspread google-auth trafilatura lxml_html_clean
+          pip install feedparser gspread google-auth trafilatura lxml_html_clean beautifulsoup4
 
-      - name: Run script
+      - name: Run Global RSS
         env:
-          # ✅ 這兩行是核心，將雲端 Secret 轉為程式能讀到的環境變數
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python rss.py
+
+      - name: Run Crypto RSS
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+        run: python crypto_rss.py
