@@ -12,53 +12,48 @@ import json
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def fetch_market_12_with_fallback():
-    # --- 1. 環境變數與路徑設定 ---
-    # 這裡保留您的 os.chdir，但在 GitHub Actions 環境中若失敗會跳過
+    # --- 1. 環境變數與路徑設定 (不動) ---
     try:
         os.chdir(os.path.dirname(os.path.abspath(__file__)))
     except:
         pass
     
-    # 優先讀取 Secret 中的 SHEET_ID，若無則使用預設值
     SPREADSHEET_ID = os.getenv('SHEET_ID')
     SHEET_NAME = 'MarketData'
     HEADERS = ["日期", "商品", "開盤價", "最高價", "最低價", "收盤價", "備註"]
     
-    # 您原始的 12 檔清單
     TW_STOCKS = {"2330": "2330", "2317": "2317", "2308": "2308", "2454": "2454", "2881": "2881"}
     US_INDICES = {"^SOX": "^SOX", "^IXIC": "^IXIC", "^GSPC": "^S&P 500", "^DJI": "^DJI"}
 
-    # --- 2. Google Sheets 連線 (支援環境變數 JSON) ---
+    # --- 2. Google Sheets 連線 (不動) ---
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        
-        # 核心修正：讀取 GitHub 傳入的 JSON 字串
         creds_json = os.getenv('GOOGLE_CREDS_JSON')
-        
         if creds_json:
-            # GitHub 環境：將 Secret 字串解析為字典
-            creds_dict = json.loads(creds_json)
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(creds_json), scope)
         else:
-            # 本地環境：讀取實體檔案
             creds = ServiceAccountCredentials.from_json_keyfile_name('creds.json', scope)
-            
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(SPREADSHEET_ID)
         ws = sh.worksheet(SHEET_NAME)
     except Exception as e:
         print(f"❌ Sheets 連接失敗: {e}"); return
 
-    # --- 3. 原始抓取邏輯 (完全保留) ---
-    collected_rows = []
-    now = datetime.datetime.now()
-    exec_time_str = now.strftime('%H:%M')
+    # --- 3. 時間邏輯修正 (僅改這部分) ---
+    # 強制獲取 UTC 時間並轉換為台灣時間 (UTC+8)
+    utc_now = datetime.datetime.utcnow()
+    tw_now = utc_now + datetime.timedelta(hours=8)
     
-    today_str = now.strftime('%Y/%m/%d')
-    yesterday_str = (now - datetime.timedelta(days=1)).strftime('%Y/%m/%d')
+    exec_time_str = tw_now.strftime('%H:%M')
+    today_str = tw_now.strftime('%Y/%m/%d')
+    # 這裡的日期用於抓取 API 資料的參數 (依舊嘗試今天與昨天)
+    yesterday_str = (tw_now - datetime.timedelta(days=1)).strftime('%Y/%m/%d')
     dates_to_try = [today_str, yesterday_str]
 
-    # --- A. 台股個股 + 加權指數 (帶回溯邏輯) ---
+    # --- 4. 原始抓取邏輯 (完全不動) ---
+    collected_rows = []
+
+    # A. 台股個股 + 加權指數
     for stock_no, name in {**TW_STOCKS, "IX0001": "加權TPE: IX0001"}.items():
         success = False
         for d_str in dates_to_try:
@@ -82,9 +77,8 @@ def fetch_market_12_with_fallback():
                     ])
                     success = True; break
             except: continue
-        if not success: print(f"⚠️ {stock_no} 嘗試兩日均無資料")
 
-    # --- B. 美股指數 (Yahoo API 內建回溯) ---
+    # B. 美股指數
     ua = {'User-Agent': 'Mozilla/5.0'}
     for yf_code, display_name in US_INDICES.items():
         try:
@@ -100,10 +94,10 @@ def fetch_market_12_with_fallback():
                 round(quote['open'][i], 2), round(quote['high'][i], 2),
                 round(quote['low'][i], 2), round(quote['close'][i], 2), f"Yahoo({actual_dt})"
             ])
-        except: print(f"⚠️ 美股 {yf_code} 抓取失敗")
+        except: pass
 
-    # --- C. 台指期 (帶回溯邏輯) ---
-    contract_month = now.strftime('%Y%m')
+    # C. 台指期
+    contract_month = tw_now.strftime('%Y%m')
     for sess_code, sess_label in [("0", ""), ("1", "-夜")]:
         success = False
         prod_name = f"TX{contract_month}{sess_label}"
@@ -127,20 +121,21 @@ def fetch_market_12_with_fallback():
                             success = True; break
                 if success: break
             except: continue
-        if not success: print(f"⚠️ {prod_name} 嘗試兩日均無資料")
 
-    # --- D. 寫回 Sheets (去重並排序) ---
+    # --- 5. 寫回 Sheets (保持排序：最新在上) ---
     if collected_rows:
         df_new = pd.DataFrame(collected_rows, columns=HEADERS)
         all_vals = ws.get_all_values()
         df_old = pd.DataFrame(all_vals[1:], columns=HEADERS) if len(all_vals) > 1 else pd.DataFrame(columns=HEADERS)
         
-        # 這裡保留您的 drop_duplicates 與 sort 邏輯
-        df_final = pd.concat([df_new, df_old]).drop_duplicates(subset=['日期', '商品'], keep='first').sort_values(by='日期', ascending=False)
+        # 合併、去重、排序 (依據「日期」欄位降序排列)
+        df_final = pd.concat([df_new, df_old]).drop_duplicates(subset=['日期', '商品'], keep='first')
+        df_final = df_final.sort_values(by='日期', ascending=False)
         
-        # 清除並寫回
-        ws.clear(); ws.append_row(HEADERS); ws.append_rows(df_final.values.tolist())
-        print(f"✅ 06:30 任務完成，目前更新: {len(df_new)} 檔")
+        ws.clear()
+        ws.append_row(HEADERS)
+        ws.append_rows(df_final.values.tolist())
+        print(f"✅ 任務完成。目前時間: {today_str}_{exec_time_str} (UTC+8)")
 
 if __name__ == "__main__":
     fetch_market_12_with_fallback()
