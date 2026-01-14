@@ -50,10 +50,10 @@ def fetch_market_12_with_fallback():
     yesterday_str = (tw_now - datetime.timedelta(days=1)).strftime('%Y/%m/%d')
     dates_to_try = [today_str, yesterday_str]
 
-    # --- 4. 原始抓取邏輯 (完全不動) ---
+    # --- 4. 原始抓取邏輯 ---
     collected_rows = []
 
-    # A. 台股個股 + 加權指數
+    # A. 台股個股 + 加權指數 (完全不動)
     for stock_no, name in {**TW_STOCKS, "IX0001": "加權TPE: IX0001"}.items():
         success = False
         for d_str in dates_to_try:
@@ -78,7 +78,7 @@ def fetch_market_12_with_fallback():
                     success = True; break
             except: continue
 
-    # B. 美股指數
+    # B. 美股指數 (完全不動)
     ua = {'User-Agent': 'Mozilla/5.0'}
     for yf_code, display_name in US_INDICES.items():
         try:
@@ -96,17 +96,30 @@ def fetch_market_12_with_fallback():
             ])
         except: pass
 
-    # C. 台指期
+    # C. 台指期 (只改這裡：分別處理一般與盤後，並確保回溯至上一個交易日)
     contract_month = tw_now.strftime('%Y%m')
+    
+    # 建立一個針對期貨的日期清單，回溯 5 天以確保涵蓋週末與連假 (滿足「上一次有交易日」的需求)
+    # 這樣在週一早上跑的時候，能抓到上週五的夜盤
+    taifex_dates = []
+    for i in range(15):
+        d_check = (tw_now - datetime.timedelta(days=i)).strftime('%Y/%m/%d')
+        taifex_dates.append(d_check)
+
+    # 0 = 一般交易時段 (Regular), 1 = 盤後交易時段 (After-hours)
+    # 依序檢查並確保兩者都能抓到數據
     for sess_code, sess_label in [("0", ""), ("1", "-夜")]:
         success = False
         prod_name = f"TX{contract_month}{sess_label}"
-        for d_str in dates_to_try:
+        
+        for d_str in taifex_dates:
             try:
                 url = 'https://www.taifex.com.tw/cht/3/futDailyMarketReport'
                 payload = {'queryType': '2', 'marketCode': sess_code, 'commodity_id': 'TX', 'queryDate': d_str}
                 resp = requests.post(url, data=payload, verify=False, timeout=10)
                 soup = BeautifulSoup(resp.text, 'html.parser')
+                
+                found_in_day = False
                 for tr in soup.find_all('tr'):
                     tds = tr.find_all('td')
                     if len(tds) >= 6 and tds[0].get_text(strip=True) == 'TX' and tds[1].get_text(strip=True) == contract_month:
@@ -114,13 +127,25 @@ def fetch_market_12_with_fallback():
                         if open_p not in ['-', '', '0']:
                             note = "期交所官方" if d_str == today_str else f"補件({d_str})"
                             collected_rows.append([
-                                f"{today_str}_{exec_time_str}", prod_name,
-                                float(open_p), float(tds[3].get_text(strip=True).replace(',', '')),
-                                float(tds[4].get_text(strip=True).replace(',', '')), float(tds[5].get_text(strip=True).replace(',', '')), note
+                                f"{today_str}_{exec_time_str}", # 記錄時間
+                                prod_name,
+                                float(open_p), 
+                                float(tds[3].get_text(strip=True).replace(',', '')),
+                                float(tds[4].get_text(strip=True).replace(',', '')), 
+                                float(tds[5].get_text(strip=True).replace(',', '')), 
+                                note
                             ])
-                            success = True; break
-                if success: break
-            except: continue
+                            found_in_day = True
+                            break # 找到該日資料，跳出 row loop
+                
+                if found_in_day:
+                    success = True
+                    break # 找到最新一筆有效資料，跳出 date loop，處理下一個 session
+            except: 
+                continue
+        
+        if not success: 
+            print(f"⚠️ {prod_name} 嘗試近 5 日均無資料")
 
     # --- 5. 寫回 Sheets (保持排序：最新在上) ---
     if collected_rows:
