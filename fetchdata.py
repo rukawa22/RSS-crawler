@@ -93,12 +93,13 @@ def fetch_market_12_with_fallback():
             ])
         except: pass
 
-    # C. 台指期 (修正回溯與資料更新邏輯)
+    # C. 台指期 (強化回溯與時段獨立抓取邏輯)
     contract_month = tw_now.strftime('%Y%m')
     
-    # 回溯 15 天以確保長假也有資料
+    # 建立回溯日期清單 (例如 15 天)，確保能跨越過年或連假
     taifex_dates = [(tw_now - datetime.timedelta(days=i)).strftime('%Y/%m/%d') for i in range(15)]
 
+    # 分別針對 一般(0) 與 盤後(1) 獨立尋找，確保不會互相誤用數據
     for sess_code, sess_label in [("0", ""), ("1", "-夜")]:
         success = False
         prod_name = f"TX{contract_month}{sess_label}"
@@ -106,31 +107,44 @@ def fetch_market_12_with_fallback():
         for d_str in taifex_dates:
             try:
                 url = 'https://www.taifex.com.tw/cht/3/futDailyMarketReport'
-                payload = {'queryType': '2', 'marketCode': sess_code, 'commodity_id': 'TX', 'queryDate': d_str}
+                payload = {
+                    'queryType': '2', 
+                    'marketCode': sess_code,     # 0:一般, 1:盤後
+                    'commodity_id': 'TX', 
+                    'queryDate': d_str
+                }
                 resp = requests.post(url, data=payload, verify=False, timeout=10)
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                found_current_day = False
+                found_data = False
                 for tr in soup.find_all('tr'):
                     tds = tr.find_all('td')
+                    # 判斷是否為目標契約與月份
                     if len(tds) >= 6 and tds[0].get_text(strip=True) == 'TX' and tds[1].get_text(strip=True) == contract_month:
                         open_p = tds[2].get_text(strip=True).replace(',', '')
+                        
+                        # 檢查價格是否為有效數字 (排除 '-' 或 '0')
                         if open_p not in ['-', '', '0']:
-                            # 如果是補件，Note 加上日期；如果是今日，則顯示官方標籤
+                            # 關鍵修正：若非今日資料，備註必須帶上日期，否則寫入時會被視為重複而無法更新
                             note = "期交所官方" if d_str == today_str else f"期交所官方({d_str})"
+                            
                             collected_rows.append([
-                                f"{today_str}_{exec_time_str}", prod_name,
+                                f"{today_str}_{exec_time_str}", 
+                                prod_name,
                                 float(open_p), 
                                 float(tds[3].get_text(strip=True).replace(',', '')),
                                 float(tds[4].get_text(strip=True).replace(',', '')), 
                                 float(tds[5].get_text(strip=True).replace(',', '')), 
                                 note
                             ])
-                            found_current_day = True; break
+                            found_data = True
+                            break
                 
-                if found_current_day:
-                    success = True; break
-            except: continue
+                if found_data:
+                    success = True
+                    break # 找到該時段最新的一筆有效資料，跳出日期回溯迴圈
+            except:
+                continue
 
     # --- 5. 寫回 Sheets ---
     if collected_rows:
@@ -148,4 +162,5 @@ def fetch_market_12_with_fallback():
 
 if __name__ == "__main__":
     fetch_market_12_with_fallback()
+
 
