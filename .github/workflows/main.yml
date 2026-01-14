@@ -2,7 +2,7 @@ name: RSS_Auto_Update
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每 1 小時跑一次
+    - cron: '15 * * * *'  # 每小時的第 15 分鐘執行，通常會比較準時
   workflow_dispatch:      # 允許手動點擊執行
 
 jobs:
