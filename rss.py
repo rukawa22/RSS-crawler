@@ -47,13 +47,18 @@ def get_google_sheet():
 
 def fetch_full_text(url):
     try:
-        downloaded = trafilatura.fetch_url(url)
+        # 增加瀏覽器偽裝，減少被擋機率
+        downloaded = trafilatura.fetch_url(url, user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
         if downloaded:
-            content = trafilatura.extract(downloaded)
-            return content if content else "無法解析內文"
+            content = trafilatura.extract(downloaded, include_comments=False, no_fallback=False)
+            if content:
+                return content
     except Exception as e:
         print(f"解析失敗 {url}: {e}")
-    return "抓取內文出錯"
+    
+    # 如果解析不到，回傳標題或簡短說明，避免試算表全是空值
+    return "無法解析內文 (可能受防爬蟲機制影響)"
 
 def cleanup_old_data(worksheet):
     try:
@@ -108,3 +113,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
