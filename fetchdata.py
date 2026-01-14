@@ -93,33 +93,30 @@ def fetch_market_12_with_fallback():
             ])
         except: pass
 
-    # C. 台指期 (修改後的邏輯：確保兩個時段都有報價)
+    # C. 台指期 (修正回溯與資料更新邏輯)
     contract_month = tw_now.strftime('%Y%m')
     
-    # 回溯 15 天以涵蓋長假，確保能找到「上一個交易日」
-    taifex_backtrack_dates = []
-    for i in range(15):
-        taifex_backtrack_dates.append((tw_now - datetime.timedelta(days=i)).strftime('%Y/%m/%d'))
+    # 回溯 15 天以確保長假也有資料
+    taifex_dates = [(tw_now - datetime.timedelta(days=i)).strftime('%Y/%m/%d') for i in range(15)]
 
-    # 分別針對 一般(0) 與 盤後(1) 獨立尋找
     for sess_code, sess_label in [("0", ""), ("1", "-夜")]:
         success = False
         prod_name = f"TX{contract_month}{sess_label}"
         
-        for d_str in taifex_backtrack_dates:
+        for d_str in taifex_dates:
             try:
                 url = 'https://www.taifex.com.tw/cht/3/futDailyMarketReport'
                 payload = {'queryType': '2', 'marketCode': sess_code, 'commodity_id': 'TX', 'queryDate': d_str}
                 resp = requests.post(url, data=payload, verify=False, timeout=10)
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 
-                found_data = False
+                found_current_day = False
                 for tr in soup.find_all('tr'):
                     tds = tr.find_all('td')
                     if len(tds) >= 6 and tds[0].get_text(strip=True) == 'TX' and tds[1].get_text(strip=True) == contract_month:
                         open_p = tds[2].get_text(strip=True).replace(',', '')
-                        # 檢查價格是否有效
                         if open_p not in ['-', '', '0']:
+                            # 如果是補件，Note 加上日期；如果是今日，則顯示官方標籤
                             note = "期交所官方" if d_str == today_str else f"期交所官方({d_str})"
                             collected_rows.append([
                                 f"{today_str}_{exec_time_str}", prod_name,
@@ -129,12 +126,11 @@ def fetch_market_12_with_fallback():
                                 float(tds[5].get_text(strip=True).replace(',', '')), 
                                 note
                             ])
-                            found_data = True; break
+                            found_current_day = True; break
                 
-                if found_data:
-                    success = True; break # 找到該時段最新的一筆，跳出日期迴圈
-            except:
-                continue
+                if found_current_day:
+                    success = True; break
+            except: continue
 
     # --- 5. 寫回 Sheets ---
     if collected_rows:
@@ -152,3 +148,4 @@ def fetch_market_12_with_fallback():
 
 if __name__ == "__main__":
     fetch_market_12_with_fallback()
+
