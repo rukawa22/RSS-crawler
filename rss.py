@@ -12,13 +12,13 @@ SHEET_ID = os.getenv('SHEET_ID')
 SHEET_NAME = 'RSS'
 
 RSS_URLS = [
-    'https://news.cnyes.com/rss/category/tw_stock', 
-    'https://www.ctee.com.tw/rss/news', 
-    'https://tw.stock.yahoo.com/rss?category=tw-market', 
-    'https://technews.tw/category/component/feed/', 
-    'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664', 
-    'https://finance.yahoo.com/news/rssindex', 
-    'https://news.google.com/rss/search?q=China+economy&hl=zh-TW&gl=TW&ceid=TW:zh-Hant' 
+    'https://news.cnyes.com/rss/category/tw_stock',         # 鉅亨網 (穩定)
+    'https://www.ctee.com.tw/rss/news',                    # 工商時報 (穩定)
+    'https://technews.tw/category/component/feed/',        # 科技新報 (穩定)
+    'https://udn.com/rssfeed/news/2/6644?ch=news',         # 經濟日報 (替代 Yahoo/Google)
+    'https://www.chinatimes.com/rss/finance.xml?chdtv',     # 中時財經 (穩定)
+    'https://cn.wsj.com/zh-hant/rss',                      # 華爾街日報中文 (高品質)
+    'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664' # CNBC
 ]
 
 def get_google_sheet():
@@ -113,4 +113,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
