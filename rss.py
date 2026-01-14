@@ -6,112 +6,103 @@ from datetime import datetime, timedelta
 import time
 import os
 import json
+from bs4 import BeautifulSoup
 
-# --- 隱私設定區域 (優先讀取 GitHub Secrets) ---
+# --- 隱私設定區域 ---
 SHEET_ID = os.getenv('SHEET_ID')
 SHEET_NAME = 'RSS'
 
+# 您整理後的台股/全球宏觀最優清單
 RSS_URLS = [
-    'https://news.cnyes.com/rss/category/tw_stock',         # 鉅亨網 (穩定)
-    'https://www.ctee.com.tw/rss/news',                    # 工商時報 (穩定)
-    'https://technews.tw/category/component/feed/',        # 科技新報 (穩定)
-    'https://udn.com/rssfeed/news/2/6644?ch=news',         # 經濟日報 (替代 Yahoo/Google)
-    'https://www.chinatimes.com/rss/finance.xml?chdtv',     # 中時財經 (穩定)
-    'https://cn.wsj.com/zh-hant/rss',                      # 華爾街日報中文 (高品質)
-    'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664' # CNBC
+    'https://news.cnyes.com/rss/category/tw_stock',         # 鉅亨台股
+    'https://www.ctee.com.tw/rss/news',                    # 工商時報
+    'https://technews.tw/category/component/feed/',        # 科技新報
+    'https://udn.com/rssfeed/news/2/6644?ch=news',         # 經濟日報
+    'https://www.chinatimes.com/rss/finance.xml?chdtv',     # 中時財經
+    'https://www.digitimes.com.tw/rss/news.xml',           # Digitimes (半導體命脈)
+    'https://cn.wsj.com/zh-hant/rss',                      # 華爾街日報 (中文)
+    'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664', # CNBC
+    'https://www.macromicro.me/rss',                       # 財經 M 平方 (宏觀趨勢)
+    'https://www.cw.com.tw/rss/channel/3'                  # 天下雜誌 (深度評論)
 ]
 
 def get_google_sheet():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    
-    # 統一金鑰讀取邏輯 (解決 GitHub Actions 報錯)
     creds_json = os.getenv('GOOGLE_CREDS_JSON')
     if creds_json:
-        creds_dict = json.loads(creds_json)
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
     else:
-        # 本地開發用
         creds = Credentials.from_service_account_file('creds.json', scopes=scopes)
     
-    client = gspread.authorize(creds)
-    sh = client.open_by_key(SHEET_ID)
-    
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(SHEET_ID)
     try:
         worksheet = sh.worksheet(SHEET_NAME)
-    except gspread.exceptions.WorksheetNotFound:
-        worksheet = sh.add_worksheet(title=SHEET_NAME, rows="5000", cols="4")
-        worksheet.append_row(["日期", "標題", "內文摘要", "連結"])
-        
-    titles = worksheet.col_values(2) # 獲取現有標題以去重
-    return worksheet, titles
-
-def fetch_full_text(url):
-    try:
-        # 增加瀏覽器偽裝，減少被擋機率
-        downloaded = trafilatura.fetch_url(url, user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        
-        if downloaded:
-            content = trafilatura.extract(downloaded, include_comments=False, no_fallback=False)
-            if content:
-                return content
-    except Exception as e:
-        print(f"解析失敗 {url}: {e}")
+    except:
+        worksheet = sh.add_worksheet(title=SHEET_NAME, rows="1000", cols="4")
+        worksheet.append_row(["時間", "標題", "內容", "連結"])
     
-    # 如果解析不到，回傳標題或簡短說明，避免試算表全是空值
-    return "無法解析內文 (可能受防爬蟲機制影響)"
+    # 讀取標題避免重複
+    existing_titles = set(worksheet.col_values(2)[:300]) 
+    return worksheet, existing_titles
 
-def cleanup_old_data(worksheet):
+def fetch_content_with_fallback(entry):
+    """嘗試抓取全文，若失敗則改抓 RSS 內建摘要"""
+    url = getattr(entry, 'link', '')
+    
+    # 1. 優先嘗試抓取全文
     try:
-        total_rows = len(worksheet.get_all_values())
-        if total_rows > 5000:
-            print(f"清理舊資料中... 目前行數: {total_rows}")
-            worksheet.delete_rows(5001, total_rows)
-    except Exception as e:
-        print(f"清理失敗: {e}")
+        downloaded = trafilatura.fetch_url(url, user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        if downloaded:
+            content = trafilatura.extract(downloaded, include_comments=False)
+            if content and len(content) > 150:
+                return content
+    except:
+        pass
+
+    # 2. 如果全文被擋，從 RSS entry 提取摘要
+    summary_raw = getattr(entry, 'summary', '') or getattr(entry, 'description', '')
+    if summary_raw:
+        # 清除摘要裡的 HTML 標籤
+        clean_summary = BeautifulSoup(summary_raw, "html.parser").get_text().strip()
+        if clean_summary:
+            return f"[摘要] {clean_summary[:600]}" # 標記為摘要，取前 600 字
+            
+    return "無法解析內文 (網站保護中)"
 
 def main():
     try:
         worksheet, existing_titles = get_google_sheet()
-        print(f"成功連線！目前已有 {len(existing_titles)} 則舊紀錄。")
+        print(f"✅ 連線成功！")
     except Exception as e:
-        print(f"連線失敗: {e}")
-        return
+        print(f"❌ 連線失敗: {e}"); return
 
     new_data = []
-    # 強制獲取台灣時間 (UTC+8)
     tw_time = datetime.utcnow() + timedelta(hours=8)
-    dt_str = tw_time.strftime('%Y-%m-%d %H:%M:%S')
+    now_str = tw_time.strftime('%Y-%m-%d %H:%M:%S')
 
     for rss_url in RSS_URLS:
-        print(f"\n[掃描] {rss_url}")
+        print(f"掃描中: {rss_url}")
         feed = feedparser.parse(rss_url)
         
-        # 維持原始的倒序讀取邏輯
         for entry in reversed(feed.entries):
             title = getattr(entry, 'title', '無標題').strip()
-            link = getattr(entry, 'link', '')
-            
-            if not link or title in existing_titles:
+            if not title or title in existing_titles:
                 continue 
 
-            print(f"  - 新文章: {title[:20]}...")
-            full_content = fetch_full_text(link)
-            # 將最新抓到的資料放入 list
-            new_data.append([dt_str, title, full_content, link])
-            time.sleep(0.5) 
+            print(f"  🆕 新文章: {title[:20]}...")
+            
+            # 使用保險抓取邏輯
+            final_content = fetch_content_with_fallback(entry)
+            
+            new_data.append([now_str, title, final_content, entry.link])
+            time.sleep(1) # 增加穩定性
 
     if new_data:
-        # 這裡反轉 new_data 確保這一批裡「最新」的在最前面
-        new_data.reverse()
-        print(f"\n正在插入 {len(new_data)} 筆新資料到頂端...")
-        # 插入在第二行 (標題列下方)，這會確保最新的資料永遠在最上面
         worksheet.insert_rows(new_data, row=2)
-        cleanup_old_data(worksheet)
-        print("🎉 更新完成！")
+        print(f"🚀 已成功寫入 {len(new_data)} 筆新聞！")
     else:
-        print("\n目前沒有新的文章。")
+        print("💡 目前無新文章。")
 
 if __name__ == "__main__":
     main()
-
-
